@@ -161,3 +161,40 @@ This creates a trigger that runs `runColdEmailer` every day at 11 PM.
 | `Code.gs` | Core logic — send, reply check, follow-up, triggers |
 | `Tracking.gs` | Apps Script webhook receiver for tracking events + bounce detection |
 | `cloudflare-worker/` | Public tracking endpoints for opens/clicks with real HTTP redirects |
+
+---
+
+## Troubleshooting
+
+### Tracking not working?
+
+**Check the webhook URL format:**
+- Apps Script Web App URL must end with `/exec`
+- Wrong: `https://script.googleusercontent.com/...` (content URL)
+- Right: `https://script.google.com/a/macros/.../exec` (web app URL)
+
+**Check Worker logs:**
+```bash
+cd cloudflare-worker
+npx wrangler tail
+```
+
+**Common errors:**
+- `401` — Web App URL is wrong or deployment deleted
+- `405` — URL is a content URL, not web app URL
+- `Missing worker secrets` — `.dev.vars` not uploaded to Cloudflare
+
+**Verify tracking flow:**
+1. Check column O (TRACKING_IDS) has values like `["abc123..."]`
+2. Open pixel URL directly: `https://your-worker.workers.dev/open?id=TRACKING_ID`
+3. Check Apps Script Executions tab for `doPost` calls
+4. Check column J (OPENED) incremented to `1`
+
+### Gmail blocking tracking pixel?
+
+Gmail blocks external images by default. Recipients need to click **"Load images"** or **"Always display images from this sender"** for open tracking to work. This is expected behavior — not all opens will be tracked.
+
+### Click tracking opens wrong page?
+
+If tracked links show a blank page instead of redirecting, the Worker is working but Gmail's iframe sandbox is interfering. The current implementation uses a simple redirect that should work in most cases. If issues persist, open the link in a new tab.
+
