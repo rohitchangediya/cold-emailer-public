@@ -19,6 +19,12 @@
 // ============================================================
 
 function runColdEmailer() {
+  // Run bounce detection first if enabled
+  if (CONFIG.ENABLE_BOUNCE_DETECTION) {
+    Logger.log("Running bounce detection...");
+    detectBounces();
+  }
+
   var sheet = getSheet();
   var data = sheet.getDataRange().getValues();
 
@@ -85,6 +91,17 @@ function runColdEmailer() {
       continue;
     }
 
+    // Generate tracking ID for this email
+    var trackingId = generateTrackingId(email, sequence);
+
+    // Apply tracking if enabled
+    if (CONFIG.ENABLE_OPEN_TRACKING) {
+      body = embedOpenPixel(body, trackingId);
+    }
+    if (CONFIG.ENABLE_CLICK_TRACKING) {
+      body = rewriteLinksForTracking(body, trackingId);
+    }
+
     try {
       var result    = sendEmail(email, subject, body, sequence);
       var newStatus = sequenceToStatus(sequence);
@@ -92,14 +109,28 @@ function runColdEmailer() {
       // Append new thread ID to the array and save back as JSON
       if (result.threadId) threadIds.push(result.threadId);
 
+      // Get existing tracking IDs and add new one
+      var trackingIdsRaw = row[COLS.TRACKING_IDS];
+      var trackingIds = [];
+      if (trackingIdsRaw) {
+        try {
+          trackingIds = JSON.parse(trackingIdsRaw);
+        } catch (e) {
+          trackingIds = [];
+        }
+      }
+      trackingIds.push(trackingId);
+
       updateRow(sheet, i + 1, {
         status:          newStatus,
         threadIds:       JSON.stringify(threadIds),
+        trackingIds:     JSON.stringify(trackingIds),
         lastEmailDate:   new Date(),
         initialSendDate: sequence === 0 ? new Date() : undefined,
       });
 
-      Logger.log("Sent sequence " + sequence + " to " + email + " [" + newStatus + "]");
+      Logger.log("Sent sequence " + sequence + " to " + email + " [" + newStatus + "]" + 
+        (CONFIG.ENABLE_OPEN_TRACKING || CONFIG.ENABLE_CLICK_TRACKING ? " with tracking ID: " + trackingId.substring(0, 8) + "..." : ""));
 
       // Respect send limits — pause briefly between sends
       Utilities.sleep(1000);
@@ -259,6 +290,9 @@ function updateRow(sheet, rowNumber, updates) {
   }
   if (updates.initialSendDate !== undefined) {
     sheet.getRange(rowNumber, COLS.INITIAL_SEND_DATE + 1).setValue(updates.initialSendDate);
+  }
+  if (updates.trackingIds !== undefined) {
+    sheet.getRange(rowNumber, COLS.TRACKING_IDS + 1).setValue(updates.trackingIds);
   }
 }
 
