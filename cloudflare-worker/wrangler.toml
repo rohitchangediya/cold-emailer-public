@@ -1,0 +1,6 @@
+name = "cold-emailer-tracking"
+main = "src/index.js"
+compatibility_date = "2026-05-14"
+
+[observability]
+enabled = true
