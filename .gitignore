@@ -5,6 +5,7 @@ Config.gs
 
 # Cloudflare Worker
 cloudflare-worker/.dev.vars
+cloudflare-worker/.wrangler/
 cloudflare-worker/node_modules/
 cloudflare-worker/dist/
 
