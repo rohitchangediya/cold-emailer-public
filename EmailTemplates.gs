@@ -23,6 +23,8 @@ function getInitialEmailBody(firstName, company) {
 
 <p>Would love to show you a quick demo and see if it's a fit for what {{company}} is working on.</p>
 
+<p><a href="https://github.com/cryptocoder0x">Check out my GitHub</a> or just reply to this email.</p>
+
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
 `
@@ -39,6 +41,8 @@ function getFollowUp1Body(firstName, company) {
 <p>I think there's a real opportunity to simplify some of the operational overhead at {{company}} — whether it's cutting down on manual processes, improving team visibility, or reducing time spent on coordination.</p>
 
 <p>Would you have 15 minutes this week for a quick walkthrough?</p>
+
+<p><a href="https://github.com/cryptocoder0x">View my GitHub profile</a> — or simply reply to this email.</p>
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
@@ -57,6 +61,8 @@ function getFollowUp2Body(firstName, company) {
 
 <p>Just say the word and I'll get it over to you.</p>
 
+<p><a href="https://github.com/cryptocoder0x">See my work on GitHub</a> or reply if you'd prefer to chat.</p>
+
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
 `
@@ -73,6 +79,8 @@ function getFollowUp3Body(firstName, company) {
 <p>If the timing isn't right at the moment, no problem at all. Should {{company}}'s needs shift down the road, feel free to reach back out — I'd be happy to reconnect.</p>
 
 <p>Wishing you and the team all the best.</p>
+
+<p><a href="https://github.com/cryptocoder0x">github.com/cryptocoder0x</a></p>
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>

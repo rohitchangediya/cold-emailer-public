@@ -1,0 +1,2 @@
+APPS_SCRIPT_WEBHOOK_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
+TRACKING_WEBHOOK_SECRET=replace-with-the-same-secret-from-config-gs
