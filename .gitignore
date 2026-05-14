@@ -1,0 +1,26 @@
+# Sensitive config files with secrets
+config.gs
+Config.gs
+.dev.vars
+
+# Cloudflare Worker
+cloudflare-worker/.dev.vars
+cloudflare-worker/node_modules/
+cloudflare-worker/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*.temp
