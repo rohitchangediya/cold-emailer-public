@@ -9,9 +9,14 @@ Automated cold email system with follow-ups and reply detection, built on Google
 - Sends personalized cold emails using `{{firstName}}` and `{{company}}` placeholders
 - Auto follow-up 3 times (2, 5, and 9 days after initial send) if no reply
 - Detects replies via Gmail thread — stops follow-ups automatically
+- **Weekend skip** — No emails on Saturday/Sunday
+- **Duplicate detection** — Auto-skip leads with duplicate emails
 - **Email open tracking** — 1x1 pixel to detect when emails are viewed
 - **Link click tracking** — track which links are clicked and when
+- **Unsubscribe handling** — One-click unsubscribe link + auto-mark as dead
 - **Bounce detection** — auto-detect delivery failures and mark leads as bounced
+- **Reply webhooks** — Get notified instantly when someone replies
+- **Sentiment analysis** — Auto-categorize replies (positive/negative/neutral) and route accordingly
 - All leads, statuses, and engagement tracked in Google Sheets
 - Daily time-based trigger for fully automated runs
 
@@ -23,15 +28,15 @@ Automated cold email system with follow-ups and reply detection, built on Google
 
 Create a new Google Sheet with the following columns **in order**:
 
-| A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P | Q |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| firstName | lastName | company | email | status | threadIds | lastEmailDate | initialSendDate | notes | opened | lastOpened | clicked | lastClicked | clickedLinks | trackingIds | bounceReason | bounceDate |
+| A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P | Q | R | S | T |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| firstName | lastName | company | email | status | threadIds | lastEmailDate | initialSendDate | notes | opened | lastOpened | clicked | lastClicked | clickedLinks | trackingIds | bounceReason | bounceDate | unsubscribed | replySentiment | lastReplyText |
 
 - Row 1 should be the **header row** (exact names don't matter, just the order)
 - Add your leads starting from **Row 2** (columns A-D only)
 - Leave all columns from E onward blank — the script fills them automatically
 
-**Note:** Columns J-Q are optional tracking columns. If you don't want tracking, you can stop at column I.
+**Note:** Columns J-T are optional tracking columns. If you don't want tracking, you can stop at column I.
 
 ### Step 2 — Create the Apps Script Project
 
@@ -57,6 +62,21 @@ INITIAL_SUBJECT: "Quick question for {{company}}",
 ENABLE_OPEN_TRACKING: true,      // Set false to disable open tracking
 ENABLE_CLICK_TRACKING: true,     // Set false to disable click tracking
 ENABLE_BOUNCE_DETECTION: true,   // Set false to disable bounce detection
+
+// Skip weekends (no emails on Saturday/Sunday)
+SKIP_WEEKENDS: true,
+
+// Skip duplicate emails
+SKIP_DUPLICATE_EMAILS: true,
+
+// Unsubscribe link in emails
+ENABLE_UNSUBSCRIBE: true,
+
+// Webhook for replied leads (optional)
+REPLIED_WEBHOOK_URL: "",
+
+// Sentiment analysis for replies
+ENABLE_SENTIMENT_ANALYSIS: true,
 ```
 
 Get your Sheet ID from the URL:
@@ -137,9 +157,10 @@ This creates a trigger that runs `runColdEmailer` every day at 11 PM.
 | `followed_up_2` | Second follow-up sent |
 | `followed_up_3` | Third follow-up sent |
 | `replied` | Reply detected — no more emails |
-| `dead` | Max follow-ups reached, no reply |
+| `dead` | Max follow-ups reached, no reply OR negative reply OR unsubscribed |
 | `skip` | Manually marked to skip this lead |
 | `bounced` | Email bounced (delivery failed) |
+| `unsubscribed` | Lead clicked unsubscribe link |
 
 ---
 
