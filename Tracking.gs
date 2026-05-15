@@ -18,18 +18,23 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: 'unauthorized' });
     }
 
-    if (!payload.type || !payload.trackingId) {
+    if (!payload.type) {
       return jsonResponse_({ ok: false, error: 'missing_fields' });
     }
 
-    if (payload.type === 'open') {
+    if (payload.type === 'open' && payload.trackingId) {
       logOpen(payload.trackingId);
       return jsonResponse_({ ok: true, type: 'open' });
     }
 
-    if (payload.type === 'click') {
+    if (payload.type === 'click' && payload.trackingId) {
       logClick(payload.trackingId, payload.url || '');
       return jsonResponse_({ ok: true, type: 'click' });
+    }
+
+    if (payload.type === 'unsubscribe' && payload.email) {
+      logUnsubscribe(payload.email);
+      return jsonResponse_({ ok: true, type: 'unsubscribe' });
     }
 
     return jsonResponse_({ ok: false, error: 'invalid_type' });
@@ -131,6 +136,25 @@ function logClick(trackingId, url) {
     }
   } catch (e) {
     Logger.log('Error logging click: ' + e.message);
+  }
+}
+
+// Log unsubscribe event
+function logUnsubscribe(email) {
+  try {
+    var sheet = getSheet();
+    var data = sheet.getDataRange().getValues();
+    
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][COLS.EMAIL] === email) {
+        sheet.getRange(i + 1, COLS.UNSUBSCRIBED + 1).setValue(true);
+        sheet.getRange(i + 1, COLS.STATUS + 1).setValue('dead');
+        Logger.log('Unsubscribe tracked for: ' + email);
+        break;
+      }
+    }
+  } catch (e) {
+    Logger.log('Error logging unsubscribe: ' + e.message);
   }
 }
 

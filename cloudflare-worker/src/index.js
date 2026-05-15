@@ -51,6 +51,28 @@ export default {
       return Response.json({ ok: true, service: "cold-email-tracker" });
     }
 
+    if (url.pathname === "/unsubscribe") {
+      const email = url.searchParams.get("email");
+      if (!email) {
+        return new Response("Missing email parameter", { status: 400 });
+      }
+
+      ctx.waitUntil(
+        sendEvent(env, {
+          type: "unsubscribe",
+          email: decodeURIComponent(email),
+        })
+      );
+
+      return new Response(
+        `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="3;url=https://google.com"></head><body><p>You have been unsubscribed. Redirecting...</p></body></html>`,
+        {
+          headers: { "content-type": "text/html" },
+          status: 200,
+        }
+      );
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };

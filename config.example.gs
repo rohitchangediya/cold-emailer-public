@@ -34,6 +34,25 @@ var CONFIG = {
   ENABLE_OPEN_TRACKING: true,
   ENABLE_CLICK_TRACKING: true,
   ENABLE_BOUNCE_DETECTION: true,
+
+  // Skip sending on weekends (Saturday = 6, Sunday = 0)
+  SKIP_WEEKENDS: true,
+
+  // Duplicate email detection - skip leads with duplicate emails
+  SKIP_DUPLICATE_EMAILS: true,
+
+  // Unsubscribe link in emails
+  ENABLE_UNSUBSCRIBE: true,
+  UNSUBSCRIBE_URL: "https://your-worker.your-subdomain.workers.dev/unsubscribe",
+
+  // Webhook for replied leads (optional)
+  REPLIED_WEBHOOK_URL: "",  // e.g., "https://hooks.zapier.com/hooks/catch/..."
+
+  // Reply sentiment analysis - categorize replies as positive/negative/neutral
+  // and send different follow-up sequences
+  ENABLE_SENTIMENT_ANALYSIS: true,
+  POSITIVE_KEYWORDS: ["interested", "yes", "sure", "okay", "sounds good", "let's talk", "book a call", "schedule", "meeting"],
+  NEGATIVE_KEYWORDS: ["not interested", "unsubscribe", "remove", "stop", "no thanks", "don't contact", "spam"],
 };
 
 // ============================================================
@@ -61,4 +80,7 @@ var COLS = {
   TRACKING_IDS:        14,  // O  — JSON array of tracking IDs per email
   BOUNCE_REASON:       15,  // P  — Why the email bounced (if applicable)
   BOUNCE_DATE:         16,  // Q  — Date bounce was detected
+  UNSUBSCRIBED:        17,  // R  — Unsubscribe status (true/false)
+  REPLY_SENTIMENT:     18,  // S  — positive | negative | neutral
+  LAST_REPLY_TEXT:     19,  // T  — Content of the last reply received
 };

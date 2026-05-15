@@ -25,8 +25,20 @@ function runColdEmailer() {
     detectBounces();
   }
 
+  // Check weekend skip
+  if (CONFIG.SKIP_WEEKENDS) {
+    var day = new Date().getDay();
+    if (day === 0 || day === 6) {
+      Logger.log("Skipping - today is a weekend (day=" + day + ")");
+      return;
+    }
+  }
+
   var sheet = getSheet();
   var data = sheet.getDataRange().getValues();
+  
+  // Track emails for duplicate detection
+  var seenEmails = {};
 
   // Row 0 is the header — skip it
   for (var i = 1; i < data.length; i++) {
@@ -51,14 +63,52 @@ function runColdEmailer() {
 
     // Skip rows with no email
     if (!email) continue;
+    
+    // Skip unsubscribed leads
+    if (row[COLS.UNSUBSCRIBED] === true || row[COLS.UNSUBSCRIBED] === "true") {
+      Logger.log("Skipping unsubscribed lead: " + email);
+      continue;
+    }
+    
+    // Duplicate detection
+    if (CONFIG.SKIP_DUPLICATE_EMAILS) {
+      if (seenEmails[email.toLowerCase()]) {
+        Logger.log("Skipping duplicate email: " + email);
+        continue;
+      }
+      seenEmails[email.toLowerCase()] = true;
+    }
 
     // Skip finished leads
-    if (status === "replied" || status === "dead" || status === "skip") continue;
+    if (status === "replied" || status === "dead" || status === "skip" || status === "bounced") continue;
 
     // --- Check for reply across all threads ---
-    if (hasReceivedReply(threadIds)) {
-      updateRow(sheet, i + 1, { status: "replied" });
-      Logger.log("Reply detected from " + email + ". Marked as replied.");
+    var replyCheck = hasReceivedReplyWithDetails(threadIds);
+    if (replyCheck.hasReply) {
+      var sentiment = CONFIG.ENABLE_SENTIMENT_ANALYSIS ? 
+        analyzeSentiment(replyCheck.replyText) : "neutral";
+      
+      updateRow(sheet, i + 1, { 
+        status: "replied",
+        replySentiment: sentiment,
+        lastReplyText: replyCheck.replyText.substring(0, 500) // Limit to 500 chars
+      });
+      
+      Logger.log("Reply detected from " + email + ". Sentiment: " + sentiment);
+      
+      // Send webhook notification if configured
+      if (CONFIG.REPLIED_WEBHOOK_URL) {
+        sendRepliedWebhook(email, company, sentiment, replyCheck.replyText);
+      }
+      
+      // Handle sentiment-based actions
+      if (sentiment === "positive") {
+        Logger.log("Positive reply from " + email + " - consider manual follow-up for booking call");
+      } else if (sentiment === "negative") {
+        Logger.log("Negative reply from " + email + " - marking as dead");
+        updateRow(sheet, i + 1, { status: "dead" });
+      }
+      
       continue;
     }
 
@@ -90,6 +140,9 @@ function runColdEmailer() {
       Logger.log("No template for sequence " + sequence + ", skipping " + email);
       continue;
     }
+    
+    // Replace email placeholder in unsubscribe link
+    body = body.replace(/\{\{email\}\}/g, encodeURIComponent(email));
 
     // Generate tracking ID for this email
     var trackingId = generateTrackingId(email, sequence);
@@ -294,6 +347,12 @@ function updateRow(sheet, rowNumber, updates) {
   if (updates.trackingIds !== undefined) {
     sheet.getRange(rowNumber, COLS.TRACKING_IDS + 1).setValue(updates.trackingIds);
   }
+  if (updates.replySentiment !== undefined) {
+    sheet.getRange(rowNumber, COLS.REPLY_SENTIMENT + 1).setValue(updates.replySentiment);
+  }
+  if (updates.lastReplyText !== undefined) {
+    sheet.getRange(rowNumber, COLS.LAST_REPLY_TEXT + 1).setValue(updates.lastReplyText);
+  }
 }
 
 // ============================================================
@@ -317,4 +376,95 @@ function resetLead() {
     }
   }
   Logger.log("Lead not found: " + targetEmail);
+}
+
+// ============================================================
+// HELPER: Check for reply and return reply text
+// ============================================================
+
+function hasReceivedReplyWithDetails(threadIds) {
+  try {
+    if (!threadIds || threadIds.length === 0) return { hasReply: false, replyText: "" };
+    
+    var myEmail = Session.getActiveUser().getEmail();
+    
+    for (var i = 0; i < threadIds.length; i++) {
+      var threadId = threadIds[i];
+      var thread = GmailApp.getThreadById(threadId);
+      if (!thread) continue;
+
+      var messages = thread.getMessages();
+      if (messages.length <= 1) continue;
+
+      // Find the most recent non-me message (the reply)
+      for (var j = messages.length - 1; j >= 1; j--) {
+        var from = messages[j].getFrom();
+        if (from.indexOf(myEmail) === -1) {
+          return {
+            hasReply: true,
+            replyText: messages[j].getPlainBody() || ""
+          };
+        }
+      }
+    }
+    return { hasReply: false, replyText: "" };
+  } catch (e) {
+    Logger.log("Could not check thread " + threadIds + ": " + e.message);
+    return { hasReply: false, replyText: "" };
+  }
+}
+
+// ============================================================
+// HELPER: Analyze reply sentiment
+// ============================================================
+
+function analyzeSentiment(text) {
+  if (!text) return "neutral";
+  
+  var lowerText = text.toLowerCase();
+  
+  // Check positive keywords
+  for (var i = 0; i < CONFIG.POSITIVE_KEYWORDS.length; i++) {
+    if (lowerText.indexOf(CONFIG.POSITIVE_KEYWORDS[i]) !== -1) {
+      return "positive";
+    }
+  }
+  
+  // Check negative keywords
+  for (var i = 0; i < CONFIG.NEGATIVE_KEYWORDS.length; i++) {
+    if (lowerText.indexOf(CONFIG.NEGATIVE_KEYWORDS[i]) !== -1) {
+      return "negative";
+    }
+  }
+  
+  return "neutral";
+}
+
+// ============================================================
+// HELPER: Send webhook for replied leads
+// ============================================================
+
+function sendRepliedWebhook(email, company, sentiment, replyText) {
+  try {
+    var payload = {
+      event: "reply_received",
+      email: email,
+      company: company,
+      sentiment: sentiment,
+      replyText: replyText.substring(0, 1000), // Limit payload size
+      timestamp: new Date().toISOString()
+    };
+    
+    var options = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+    
+    var response = UrlFetchApp.fetch(CONFIG.REPLIED_WEBHOOK_URL, options);
+    Logger.log("Replied webhook sent: " + response.getResponseCode());
+  } catch (e) {
+    Logger.log("Failed to send replied webhook: " + e.message);
+  }
 }
