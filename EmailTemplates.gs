@@ -65,7 +65,7 @@ function getFollowUp2Body(firstName, company) {
 
 <p>Just say the word and I'll get it over to you.</p>
 
-<p><a href="https://github.com/cryptocoder0x">See my work on GitHub</a> or reply if you'd prefer to chat.</p>
+<p><a href="https://github.com/rohitchangediya">See my work on GitHub</a> or reply if you'd prefer to chat.</p>
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
@@ -86,7 +86,7 @@ function getFollowUp3Body(firstName, company) {
 
 <p>Wishing you and the team all the best.</p>
 
-<p><a href="https://github.com/cryptocoder0x">github.com/cryptocoder0x</a></p>
+<p><a href="https://github.com/rohitchangediya">github.com/rohitchangediya</a></p>
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>

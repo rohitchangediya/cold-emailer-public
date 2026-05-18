@@ -83,32 +83,19 @@ function runColdEmailer() {
     if (status === "replied" || status === "dead" || status === "skip" || status === "bounced") continue;
 
     // --- Check for reply across all threads ---
-    var replyCheck = hasReceivedReplyWithDetails(threadIds);
-    if (replyCheck.hasReply) {
-      var sentiment = CONFIG.ENABLE_SENTIMENT_ANALYSIS ? 
-        analyzeSentiment(replyCheck.replyText) : "neutral";
-      
-      updateRow(sheet, i + 1, { 
-        status: "replied",
-        replySentiment: sentiment,
-        lastReplyText: replyCheck.replyText.substring(0, 500) // Limit to 500 chars
-      });
-      
-      Logger.log("Reply detected from " + email + ". Sentiment: " + sentiment);
-      
-      // Send webhook notification if configured
-      if (CONFIG.REPLIED_WEBHOOK_URL) {
-        sendRepliedWebhook(email, company, sentiment, replyCheck.replyText);
+    if (hasReceivedReply(threadIds)) {
+      var replyInfo = getReplyInfo(threadIds);
+      var replyUpdates = { status: "replied" };
+
+      if (COLS.REPLY_SENTIMENT !== undefined) {
+        replyUpdates.replySentiment = replyInfo.sentiment;
       }
-      
-      // Handle sentiment-based actions
-      if (sentiment === "positive") {
-        Logger.log("Positive reply from " + email + " - consider manual follow-up for booking call");
-      } else if (sentiment === "negative") {
-        Logger.log("Negative reply from " + email + " - marking as dead");
-        updateRow(sheet, i + 1, { status: "dead" });
+      if (COLS.LAST_REPLY_TEXT !== undefined) {
+        replyUpdates.lastReplyText = replyInfo.text;
       }
-      
+
+      updateRow(sheet, i + 1, replyUpdates);
+      Logger.log("Reply detected from " + email + ". Marked as replied.");
       continue;
     }
 
@@ -153,6 +140,9 @@ function runColdEmailer() {
     }
     if (CONFIG.ENABLE_CLICK_TRACKING) {
       body = rewriteLinksForTracking(body, trackingId);
+    }
+    if (CONFIG.ENABLE_UNSUBSCRIBE) {
+      body = appendUnsubscribeLinkSafe_(body, trackingId);
     }
 
     try {
@@ -268,6 +258,114 @@ function hasReceivedReply(threadIds) {
   }
 }
 
+function getReplyInfo(threadIds) {
+  try {
+    var result = {
+      hasReply: false,
+      sentiment: "neutral",
+      text: "",
+    };
+
+    if (!threadIds || threadIds.length === 0) return result;
+
+    var myEmail = String(Session.getActiveUser().getEmail() || "").toLowerCase();
+    var latestReplyDate = null;
+    var latestReplyText = "";
+
+    for (var i = 0; i < threadIds.length; i++) {
+      var threadId = threadIds[i];
+      var thread = GmailApp.getThreadById(threadId);
+      if (!thread) continue;
+
+      var messages = thread.getMessages();
+      if (messages.length <= 1) continue;
+
+      // Make sure at least one message is NOT from us (i.e., it's a reply)
+      for (var j = 1; j < messages.length; j++) {
+        var from = String(messages[j].getFrom() || "").toLowerCase();
+        if (from.indexOf(myEmail) !== -1) continue;
+
+        var messageDate = messages[j].getDate();
+        if (!latestReplyDate || messageDate > latestReplyDate) {
+          latestReplyDate = messageDate;
+          latestReplyText = messages[j].getPlainBody() || "";
+        }
+      }
+    }
+
+    if (latestReplyDate) {
+      result.hasReply = true;
+      result.text = normalizeReplyText_(latestReplyText);
+      result.sentiment = analyzeReplySentiment_(result.text);
+    }
+
+    return result;
+  } catch (e) {
+    Logger.log("Could not check thread " + threadIds + ": " + e.message);
+    return {
+      hasReply: false,
+      sentiment: "neutral",
+      text: "",
+    };
+  }
+}
+
+function normalizeReplyText_(text) {
+  var cleaned = String(text || "").replace(/\r/g, "").trim();
+  if (!cleaned) return "";
+
+  var splitPatterns = [
+    /\nOn .+wrote:\n/i,
+    /\nFrom:\s/i,
+    /\n-+\s*Original Message\s*-+/i,
+  ];
+
+  for (var i = 0; i < splitPatterns.length; i++) {
+    var idx = cleaned.search(splitPatterns[i]);
+    if (idx > 0) {
+      cleaned = cleaned.substring(0, idx).trim();
+      break;
+    }
+  }
+
+  return cleaned.substring(0, 1000);
+}
+
+function analyzeReplySentiment_(replyText) {
+  if (!CONFIG.ENABLE_SENTIMENT_ANALYSIS) {
+    return "neutral";
+  }
+
+  var text = String(replyText || "").toLowerCase();
+  if (!text) return "neutral";
+
+  var positiveKeywords = CONFIG.POSITIVE_KEYWORDS || [];
+  var negativeKeywords = CONFIG.NEGATIVE_KEYWORDS || [];
+  var positiveHits = 0;
+  var negativeHits = 0;
+
+  for (var i = 0; i < positiveKeywords.length; i++) {
+    if (text.indexOf(String(positiveKeywords[i]).toLowerCase()) !== -1) {
+      positiveHits++;
+    }
+  }
+
+  for (var j = 0; j < negativeKeywords.length; j++) {
+    if (text.indexOf(String(negativeKeywords[j]).toLowerCase()) !== -1) {
+      negativeHits++;
+    }
+  }
+
+  if (negativeHits > 0 && negativeHits >= positiveHits) {
+    return "negative";
+  }
+  if (positiveHits > 0) {
+    return "positive";
+  }
+
+  return "neutral";
+}
+
 // ============================================================
 // HELPER: Days since a given date
 // ============================================================
@@ -318,6 +416,36 @@ function buildSubject(sequence, company) {
   return template.replace(/\{\{company\}\}/g, company);
 }
 
+function appendUnsubscribeLinkSafe_(body, trackingId) {
+
+
+  if (typeof appendUnsubscribeLink === 'function') {
+    return appendUnsubscribeLink(body, trackingId);
+  }
+
+  var trackingBaseUrl = (CONFIG.TRACKING_BASE_URL || 'https://your-worker.your-subdomain.workers.dev').replace(/\/$/, '');
+  var unsubscribeBase = (CONFIG.UNSUBSCRIBE_URL || (trackingBaseUrl + '/unsubscribe')).replace(/\/$/, '');
+  var unsubscribeUrl;
+
+  if (unsubscribeBase.indexOf('{{trackingId}}') !== -1) {
+    unsubscribeUrl = unsubscribeBase.replace(/\{\{trackingId\}\}/g, encodeURIComponent(trackingId));
+  } else {
+    var separator = unsubscribeBase.indexOf('?') === -1 ? '?' : '&';
+    unsubscribeUrl = unsubscribeBase + separator + 'id=' + encodeURIComponent(trackingId);
+  }
+
+  var footer = '<p style="margin-top:24px;font-size:12px;color:#666;">If you no longer want to receive these emails, <a href="' + unsubscribeUrl + '">unsubscribe here</a>.</p>';
+
+  if (body.indexOf('</body>') !== -1) {
+    return body.replace('</body>', footer + '</body>');
+  }
+  if (body.indexOf('</html>') !== -1) {
+    return body.replace('</html>', footer + '</html>');
+  }
+
+  return body + footer;
+}
+
 // ============================================================
 // HELPER: Get the leads sheet
 // ============================================================
@@ -338,6 +466,15 @@ function updateRow(sheet, rowNumber, updates) {
   if (updates.threadIds !== undefined) {
     sheet.getRange(rowNumber, COLS.THREAD_IDS + 1).setValue(updates.threadIds);
   }
+  if (updates.replySentiment !== undefined && COLS.REPLY_SENTIMENT !== undefined) {
+    sheet.getRange(rowNumber, COLS.REPLY_SENTIMENT + 1).setValue(updates.replySentiment);
+  }
+  if (updates.lastReplyText !== undefined && COLS.LAST_REPLY_TEXT !== undefined) {
+    sheet.getRange(rowNumber, COLS.LAST_REPLY_TEXT + 1).setValue(updates.lastReplyText);
+  }
+  if (updates.trackingIds !== undefined) {
+    sheet.getRange(rowNumber, COLS.TRACKING_IDS + 1).setValue(updates.trackingIds);
+  }
   if (updates.lastEmailDate !== undefined) {
     sheet.getRange(rowNumber, COLS.LAST_EMAIL_DATE + 1).setValue(updates.lastEmailDate);
   }
@@ -347,10 +484,10 @@ function updateRow(sheet, rowNumber, updates) {
   if (updates.trackingIds !== undefined) {
     sheet.getRange(rowNumber, COLS.TRACKING_IDS + 1).setValue(updates.trackingIds);
   }
-  if (updates.replySentiment !== undefined) {
+  if (updates.replySentiment !== undefined && COLS.REPLY_SENTIMENT !== undefined) {
     sheet.getRange(rowNumber, COLS.REPLY_SENTIMENT + 1).setValue(updates.replySentiment);
   }
-  if (updates.lastReplyText !== undefined) {
+  if (updates.lastReplyText !== undefined && COLS.LAST_REPLY_TEXT !== undefined) {
     sheet.getRange(rowNumber, COLS.LAST_REPLY_TEXT + 1).setValue(updates.lastReplyText);
   }
 }
