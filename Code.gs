@@ -25,8 +25,20 @@ function runColdEmailer() {
     detectBounces();
   }
 
+  // Check weekend skip
+  if (CONFIG.SKIP_WEEKENDS) {
+    var day = new Date().getDay();
+    if (day === 0 || day === 6) {
+      Logger.log("Skipping - today is a weekend (day=" + day + ")");
+      return;
+    }
+  }
+
   var sheet = getSheet();
   var data = sheet.getDataRange().getValues();
+  
+  // Track emails for duplicate detection
+  var seenEmails = {};
 
   // Row 0 is the header — skip it
   for (var i = 1; i < data.length; i++) {
@@ -51,13 +63,38 @@ function runColdEmailer() {
 
     // Skip rows with no email
     if (!email) continue;
+    
+    // Skip unsubscribed leads
+    if (row[COLS.UNSUBSCRIBED] === true || row[COLS.UNSUBSCRIBED] === "true") {
+      Logger.log("Skipping unsubscribed lead: " + email);
+      continue;
+    }
+    
+    // Duplicate detection
+    if (CONFIG.SKIP_DUPLICATE_EMAILS) {
+      if (seenEmails[email.toLowerCase()]) {
+        Logger.log("Skipping duplicate email: " + email);
+        continue;
+      }
+      seenEmails[email.toLowerCase()] = true;
+    }
 
     // Skip finished leads
-    if (status === "replied" || status === "dead" || status === "skip") continue;
+    if (status === "replied" || status === "dead" || status === "skip" || status === "bounced") continue;
 
     // --- Check for reply across all threads ---
     if (hasReceivedReply(threadIds)) {
-      updateRow(sheet, i + 1, { status: "replied" });
+      var replyInfo = getReplyInfo(threadIds);
+      var replyUpdates = { status: "replied" };
+
+      if (COLS.REPLY_SENTIMENT !== undefined) {
+        replyUpdates.replySentiment = replyInfo.sentiment;
+      }
+      if (COLS.LAST_REPLY_TEXT !== undefined) {
+        replyUpdates.lastReplyText = replyInfo.text;
+      }
+
+      updateRow(sheet, i + 1, replyUpdates);
       Logger.log("Reply detected from " + email + ". Marked as replied.");
       continue;
     }
@@ -90,6 +127,9 @@ function runColdEmailer() {
       Logger.log("No template for sequence " + sequence + ", skipping " + email);
       continue;
     }
+    
+    // Replace email placeholder in unsubscribe link
+    body = body.replace(/\{\{email\}\}/g, encodeURIComponent(email));
 
     // Generate tracking ID for this email
     var trackingId = generateTrackingId(email, sequence);
@@ -100,6 +140,9 @@ function runColdEmailer() {
     }
     if (CONFIG.ENABLE_CLICK_TRACKING) {
       body = rewriteLinksForTracking(body, trackingId);
+    }
+    if (CONFIG.ENABLE_UNSUBSCRIBE) {
+      body = appendUnsubscribeLinkSafe_(body, trackingId);
     }
 
     try {
@@ -215,6 +258,114 @@ function hasReceivedReply(threadIds) {
   }
 }
 
+function getReplyInfo(threadIds) {
+  try {
+    var result = {
+      hasReply: false,
+      sentiment: "neutral",
+      text: "",
+    };
+
+    if (!threadIds || threadIds.length === 0) return result;
+
+    var myEmail = String(Session.getActiveUser().getEmail() || "").toLowerCase();
+    var latestReplyDate = null;
+    var latestReplyText = "";
+
+    for (var i = 0; i < threadIds.length; i++) {
+      var threadId = threadIds[i];
+      var thread = GmailApp.getThreadById(threadId);
+      if (!thread) continue;
+
+      var messages = thread.getMessages();
+      if (messages.length <= 1) continue;
+
+      // Make sure at least one message is NOT from us (i.e., it's a reply)
+      for (var j = 1; j < messages.length; j++) {
+        var from = String(messages[j].getFrom() || "").toLowerCase();
+        if (from.indexOf(myEmail) !== -1) continue;
+
+        var messageDate = messages[j].getDate();
+        if (!latestReplyDate || messageDate > latestReplyDate) {
+          latestReplyDate = messageDate;
+          latestReplyText = messages[j].getPlainBody() || "";
+        }
+      }
+    }
+
+    if (latestReplyDate) {
+      result.hasReply = true;
+      result.text = normalizeReplyText_(latestReplyText);
+      result.sentiment = analyzeReplySentiment_(result.text);
+    }
+
+    return result;
+  } catch (e) {
+    Logger.log("Could not check thread " + threadIds + ": " + e.message);
+    return {
+      hasReply: false,
+      sentiment: "neutral",
+      text: "",
+    };
+  }
+}
+
+function normalizeReplyText_(text) {
+  var cleaned = String(text || "").replace(/\r/g, "").trim();
+  if (!cleaned) return "";
+
+  var splitPatterns = [
+    /\nOn .+wrote:\n/i,
+    /\nFrom:\s/i,
+    /\n-+\s*Original Message\s*-+/i,
+  ];
+
+  for (var i = 0; i < splitPatterns.length; i++) {
+    var idx = cleaned.search(splitPatterns[i]);
+    if (idx > 0) {
+      cleaned = cleaned.substring(0, idx).trim();
+      break;
+    }
+  }
+
+  return cleaned.substring(0, 1000);
+}
+
+function analyzeReplySentiment_(replyText) {
+  if (!CONFIG.ENABLE_SENTIMENT_ANALYSIS) {
+    return "neutral";
+  }
+
+  var text = String(replyText || "").toLowerCase();
+  if (!text) return "neutral";
+
+  var positiveKeywords = CONFIG.POSITIVE_KEYWORDS || [];
+  var negativeKeywords = CONFIG.NEGATIVE_KEYWORDS || [];
+  var positiveHits = 0;
+  var negativeHits = 0;
+
+  for (var i = 0; i < positiveKeywords.length; i++) {
+    if (text.indexOf(String(positiveKeywords[i]).toLowerCase()) !== -1) {
+      positiveHits++;
+    }
+  }
+
+  for (var j = 0; j < negativeKeywords.length; j++) {
+    if (text.indexOf(String(negativeKeywords[j]).toLowerCase()) !== -1) {
+      negativeHits++;
+    }
+  }
+
+  if (negativeHits > 0 && negativeHits >= positiveHits) {
+    return "negative";
+  }
+  if (positiveHits > 0) {
+    return "positive";
+  }
+
+  return "neutral";
+}
+
 // ============================================================
 // HELPER: Days since a given date
 // ============================================================
@@ -265,6 +416,36 @@ function buildSubject(sequence, company) {
   return template.replace(/\{\{company\}\}/g, company);
 }
 
+function appendUnsubscribeLinkSafe_(body, trackingId) {
+
+
+  if (typeof appendUnsubscribeLink === 'function') {
+    return appendUnsubscribeLink(body, trackingId);
+  }
+
+  var trackingBaseUrl = (CONFIG.TRACKING_BASE_URL || 'https://your-worker.your-subdomain.workers.dev').replace(/\/$/, '');
+  var unsubscribeBase = (CONFIG.UNSUBSCRIBE_URL || (trackingBaseUrl + '/unsubscribe')).replace(/\/$/, '');
+  var unsubscribeUrl;
+
+  if (unsubscribeBase.indexOf('{{trackingId}}') !== -1) {
+    unsubscribeUrl = unsubscribeBase.replace(/\{\{trackingId\}\}/g, encodeURIComponent(trackingId));
+  } else {
+    var separator = unsubscribeBase.indexOf('?') === -1 ? '?' : '&';
+    unsubscribeUrl = unsubscribeBase + separator + 'id=' + encodeURIComponent(trackingId);
+  }
+
+  var footer = '<p style="margin-top:24px;font-size:12px;color:#666;">If you no longer want to receive these emails, <a href="' + unsubscribeUrl + '">unsubscribe here</a>.</p>';
+
+  if (body.indexOf('</body>') !== -1) {
+    return body.replace('</body>', footer + '</body>');
+  }
+  if (body.indexOf('</html>') !== -1) {
+    return body.replace('</html>', footer + '</html>');
+  }
+
+  return body + footer;
+}
+
 // ============================================================
 // HELPER: Get the leads sheet
 // ============================================================
@@ -285,6 +466,15 @@ function updateRow(sheet, rowNumber, updates) {
   if (updates.threadIds !== undefined) {
     sheet.getRange(rowNumber, COLS.THREAD_IDS + 1).setValue(updates.threadIds);
   }
+  if (updates.replySentiment !== undefined && COLS.REPLY_SENTIMENT !== undefined) {
+    sheet.getRange(rowNumber, COLS.REPLY_SENTIMENT + 1).setValue(updates.replySentiment);
+  }
+  if (updates.lastReplyText !== undefined && COLS.LAST_REPLY_TEXT !== undefined) {
+    sheet.getRange(rowNumber, COLS.LAST_REPLY_TEXT + 1).setValue(updates.lastReplyText);
+  }
+  if (updates.trackingIds !== undefined) {
+    sheet.getRange(rowNumber, COLS.TRACKING_IDS + 1).setValue(updates.trackingIds);
+  }
   if (updates.lastEmailDate !== undefined) {
     sheet.getRange(rowNumber, COLS.LAST_EMAIL_DATE + 1).setValue(updates.lastEmailDate);
   }
@@ -293,6 +483,12 @@ function updateRow(sheet, rowNumber, updates) {
   }
   if (updates.trackingIds !== undefined) {
     sheet.getRange(rowNumber, COLS.TRACKING_IDS + 1).setValue(updates.trackingIds);
+  }
+  if (updates.replySentiment !== undefined && COLS.REPLY_SENTIMENT !== undefined) {
+    sheet.getRange(rowNumber, COLS.REPLY_SENTIMENT + 1).setValue(updates.replySentiment);
+  }
+  if (updates.lastReplyText !== undefined && COLS.LAST_REPLY_TEXT !== undefined) {
+    sheet.getRange(rowNumber, COLS.LAST_REPLY_TEXT + 1).setValue(updates.lastReplyText);
   }
 }
 
@@ -317,4 +513,95 @@ function resetLead() {
     }
   }
   Logger.log("Lead not found: " + targetEmail);
+}
+
+// ============================================================
+// HELPER: Check for reply and return reply text
+// ============================================================
+
+function hasReceivedReplyWithDetails(threadIds) {
+  try {
+    if (!threadIds || threadIds.length === 0) return { hasReply: false, replyText: "" };
+    
+    var myEmail = Session.getActiveUser().getEmail();
+    
+    for (var i = 0; i < threadIds.length; i++) {
+      var threadId = threadIds[i];
+      var thread = GmailApp.getThreadById(threadId);
+      if (!thread) continue;
+
+      var messages = thread.getMessages();
+      if (messages.length <= 1) continue;
+
+      // Find the most recent non-me message (the reply)
+      for (var j = messages.length - 1; j >= 1; j--) {
+        var from = messages[j].getFrom();
+        if (from.indexOf(myEmail) === -1) {
+          return {
+            hasReply: true,
+            replyText: messages[j].getPlainBody() || ""
+          };
+        }
+      }
+    }
+    return { hasReply: false, replyText: "" };
+  } catch (e) {
+    Logger.log("Could not check thread " + threadIds + ": " + e.message);
+    return { hasReply: false, replyText: "" };
+  }
+}
+
+// ============================================================
+// HELPER: Analyze reply sentiment
+// ============================================================
+
+function analyzeSentiment(text) {
+  if (!text) return "neutral";
+  
+  var lowerText = text.toLowerCase();
+  
+  // Check positive keywords
+  for (var i = 0; i < CONFIG.POSITIVE_KEYWORDS.length; i++) {
+    if (lowerText.indexOf(CONFIG.POSITIVE_KEYWORDS[i]) !== -1) {
+      return "positive";
+    }
+  }
+  
+  // Check negative keywords
+  for (var i = 0; i < CONFIG.NEGATIVE_KEYWORDS.length; i++) {
+    if (lowerText.indexOf(CONFIG.NEGATIVE_KEYWORDS[i]) !== -1) {
+      return "negative";
+    }
+  }
+  
+  return "neutral";
+}
+
+// ============================================================
+// HELPER: Send webhook for replied leads
+// ============================================================
+
+function sendRepliedWebhook(email, company, sentiment, replyText) {
+  try {
+    var payload = {
+      event: "reply_received",
+      email: email,
+      company: company,
+      sentiment: sentiment,
+      replyText: replyText.substring(0, 1000), // Limit payload size
+      timestamp: new Date().toISOString()
+    };
+    
+    var options = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+    
+    var response = UrlFetchApp.fetch(CONFIG.REPLIED_WEBHOOK_URL, options);
+    Logger.log("Replied webhook sent: " + response.getResponseCode());
+  } catch (e) {
+    Logger.log("Failed to send replied webhook: " + e.message);
+  }
 }

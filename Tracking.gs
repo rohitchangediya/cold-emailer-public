@@ -13,29 +13,78 @@ function doGet(e) {
 function doPost(e) {
   try {
     var payload = parseTrackingPayload_(e);
+    console.log('Tracking webhook hit. type=' + (payload && payload.type ? payload.type : 'none') + ', trackingId=' + (payload && payload.trackingId ? String(payload.trackingId).substring(0, 8) + '...' : 'none'));
 
     if (!payload || !payload.secret || payload.secret !== CONFIG.TRACKING_WEBHOOK_SECRET) {
+      console.log('Tracking webhook unauthorized request');
       return jsonResponse_({ ok: false, error: 'unauthorized' });
     }
 
     if (!payload.type || !payload.trackingId) {
+      console.log('Tracking webhook missing fields');
       return jsonResponse_({ ok: false, error: 'missing_fields' });
     }
 
-    if (payload.type === 'open') {
+    if (payload.type === 'open' && payload.trackingId) {
       logOpen(payload.trackingId);
       return jsonResponse_({ ok: true, type: 'open' });
     }
 
-    if (payload.type === 'click') {
+    if (payload.type === 'click' && payload.trackingId) {
       logClick(payload.trackingId, payload.url || '');
       return jsonResponse_({ ok: true, type: 'click' });
     }
 
+    if (payload.type === 'unsubscribe') {
+      var unsubscribeMatched = logUnsubscribe(payload.trackingId);
+      console.log('Unsubscribe event processed. matched=' + unsubscribeMatched);
+      return jsonResponse_({ ok: true, type: 'unsubscribe', matched: unsubscribeMatched });
+    }
+
+    console.log('Tracking webhook invalid type: ' + payload.type);
     return jsonResponse_({ ok: false, error: 'invalid_type' });
   } catch (e) {
-    Logger.log('Error in tracking webhook: ' + e.message);
+    console.log('Error in tracking webhook: ' + e.message);
     return jsonResponse_({ ok: false, error: 'server_error', message: e.message });
+  }
+}
+
+function logUnsubscribe(trackingId) {
+  try {
+    var sheet = getSheet();
+    var data = sheet.getDataRange().getValues();
+    var found = false;
+
+    for (var i = 1; i < data.length; i++) {
+      var trackingIdsRaw = data[i][COLS.TRACKING_IDS];
+      if (!trackingIdsRaw) continue;
+
+      var trackingIds = [];
+      try {
+        var parsed = JSON.parse(trackingIdsRaw);
+        trackingIds = Array.isArray(parsed) ? parsed : [String(parsed)];
+      } catch (parseErr) {
+        trackingIds = [String(trackingIdsRaw)];
+      }
+
+      if (trackingIds.indexOf(trackingId) !== -1 || String(trackingIdsRaw).indexOf(trackingId) !== -1) {
+        sheet.getRange(i + 1, COLS.STATUS + 1).setValue('skip');
+        if (COLS.UNSUBSCRIBED !== undefined) {
+          sheet.getRange(i + 1, COLS.UNSUBSCRIBED + 1).setValue(true);
+        }
+        Logger.log('Unsubscribe tracked for: ' + data[i][COLS.EMAIL]);
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      Logger.log('Unsubscribe tracking ID not found in sheet: ' + trackingId);
+    }
+    return found;
+  } catch (e) {
+    Logger.log('Error logging unsubscribe: ' + e.message);
+    return false;
   }
 }
 
@@ -76,6 +125,10 @@ function rewriteLinksForTracking(body, trackingId) {
   var linkRegex = /<a\b([^>]*?)href=["'](https?:\/\/[^"']+)["']([^>]*)>/gi;
 
   return body.replace(linkRegex, function(match, beforeHref, url, afterHref) {
+    if (/\/unsubscribe(?:[/?]|$)/i.test(url)) {
+      return match;
+    }
+
     var encodedUrl = encodeURIComponent(url);
     var trackingUrl = getTrackingBaseUrl() + '/click?id=' + trackingId + '&url=' + encodedUrl;
     var attributes = (beforeHref || '') + (afterHref || '');
@@ -83,6 +136,38 @@ function rewriteLinksForTracking(body, trackingId) {
     var relAttr = /\brel\s*=/i.test(attributes) ? '' : ' rel="noopener noreferrer"';
     return '<a' + (beforeHref || '') + 'href="' + trackingUrl + '"' + (afterHref || '') + targetAttr + relAttr + '>';
   });
+}
+
+function buildUnsubscribeUrl(trackingId) {
+  var unsubscribeBase = (CONFIG.UNSUBSCRIBE_URL || (getTrackingBaseUrl() + '/unsubscribe')).replace(/\/$/, '');
+
+  if (unsubscribeBase.indexOf('{{trackingId}}') !== -1) {
+    return unsubscribeBase.replace(/\{\{trackingId\}\}/g, encodeURIComponent(trackingId));
+  }
+
+  if (unsubscribeBase.indexOf('{{email}}') !== -1) {
+    unsubscribeBase = unsubscribeBase.replace(/\{\{email\}\}/g, '');
+  }
+
+  if (/[?&]id=/i.test(unsubscribeBase)) {
+    return unsubscribeBase;
+  }
+
+  var separator = unsubscribeBase.indexOf('?') === -1 ? '?' : '&';
+  return unsubscribeBase + separator + 'id=' + encodeURIComponent(trackingId);
+}
+
+function appendUnsubscribeLink(body, trackingId) {
+  var unsubscribeUrl = buildUnsubscribeUrl(trackingId);
+  var footer = '<p style="margin-top:24px;font-size:12px;color:#666;">If you no longer want to receive these emails, <a href="' + unsubscribeUrl + '">unsubscribe here</a>.</p>';
+
+  if (body.indexOf('</body>') !== -1) {
+    return body.replace('</body>', footer + '</body>');
+  } else if (body.indexOf('</html>') !== -1) {
+    return body.replace('</html>', footer + '</html>');
+  }
+
+  return body + footer;
 }
 
 // Log email open event
@@ -131,6 +216,25 @@ function logClick(trackingId, url) {
     }
   } catch (e) {
     Logger.log('Error logging click: ' + e.message);
+  }
+}
+
+// Log unsubscribe event
+function logUnsubscribe(email) {
+  try {
+    var sheet = getSheet();
+    var data = sheet.getDataRange().getValues();
+    
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][COLS.EMAIL] === email) {
+        sheet.getRange(i + 1, COLS.UNSUBSCRIBED + 1).setValue(true);
+        sheet.getRange(i + 1, COLS.STATUS + 1).setValue('dead');
+        Logger.log('Unsubscribe tracked for: ' + email);
+        break;
+      }
+    }
+  } catch (e) {
+    Logger.log('Error logging unsubscribe: ' + e.message);
   }
 }
 

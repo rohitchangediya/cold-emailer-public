@@ -27,6 +27,8 @@ function getInitialEmailBody(firstName, company) {
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
+
+${getUnsubscribeFooter()}
 `
   .replace(/\{\{firstName\}\}/g, firstName)
   .replace(/\{\{company\}\}/g, company);
@@ -46,6 +48,8 @@ function getFollowUp1Body(firstName, company) {
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
+
+${getUnsubscribeFooter()}
 `
   .replace(/\{\{firstName\}\}/g, firstName)
   .replace(/\{\{company\}\}/g, company);
@@ -61,10 +65,12 @@ function getFollowUp2Body(firstName, company) {
 
 <p>Just say the word and I'll get it over to you.</p>
 
-<p><a href="https://github.com/cryptocoder0x">See my work on GitHub</a> or reply if you'd prefer to chat.</p>
+<p><a href="https://github.com/rohitchangediya">See my work on GitHub</a> or reply if you'd prefer to chat.</p>
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
+
+${getUnsubscribeFooter()}
 `
   .replace(/\{\{firstName\}\}/g, firstName)
   .replace(/\{\{company\}\}/g, company);
@@ -80,13 +86,26 @@ function getFollowUp3Body(firstName, company) {
 
 <p>Wishing you and the team all the best.</p>
 
-<p><a href="https://github.com/cryptocoder0x">github.com/cryptocoder0x</a></p>
+<p><a href="https://github.com/rohitchangediya">github.com/rohitchangediya</a></p>
 
 <p>Best,<br>
 ${CONFIG.SENDER_NAME}</p>
+
+${getUnsubscribeFooter()}
 `
   .replace(/\{\{firstName\}\}/g, firstName)
   .replace(/\{\{company\}\}/g, company);
+}
+
+// Unsubscribe footer - shown if enabled in config
+function getUnsubscribeFooter() {
+  if (!CONFIG.ENABLE_UNSUBSCRIBE) return "";
+  
+  return `
+<br>
+<p style="font-size: 11px; color: #888; margin-top: 20px;">
+  <a href="${CONFIG.UNSUBSCRIBE_URL}?email={{email}}" style="color: #888;">Unsubscribe</a> from these emails.
+</p>`;
 }
 
 // Returns the correct body function based on follow-up sequence number

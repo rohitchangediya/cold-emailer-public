@@ -47,8 +47,59 @@ export default {
       return Response.redirect(destination, 302);
     }
 
+    if (url.pathname === "/unsubscribe") {
+      const trackingId = url.searchParams.get("id");
+      const destination = url.searchParams.get("url");
+
+      if (trackingId) {
+        ctx.waitUntil(
+          sendEvent(env, {
+            type: "unsubscribe",
+            trackingId,
+            url: destination || "",
+          })
+        );
+      }
+
+      if (destination) {
+        return Response.redirect(destination, 302);
+      }
+
+      return new Response(
+        "<html><body><p>You have been unsubscribed.</p></body></html>",
+        {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
+
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "cold-email-tracker" });
+    }
+
+    if (url.pathname === "/unsubscribe") {
+      const email = url.searchParams.get("email");
+      if (!email) {
+        return new Response("Missing email parameter", { status: 400 });
+      }
+
+      ctx.waitUntil(
+        sendEvent(env, {
+          type: "unsubscribe",
+          email: decodeURIComponent(email),
+        })
+      );
+
+      return new Response(
+        `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="3;url=https://google.com"></head><body><p>You have been unsubscribed. Redirecting...</p></body></html>`,
+        {
+          headers: { "content-type": "text/html" },
+          status: 200,
+        }
+      );
     }
 
     return new Response("Not found", { status: 404 });
@@ -73,8 +124,21 @@ async function sendEvent(env, payload) {
     }),
   });
 
+  const responseText = await response.text();
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch (err) {
+    parsed = null;
+  }
+
   if (!response.ok) {
-    const body = await response.text();
-    console.log("Tracking webhook failed", response.status, body);
+    console.log("Tracking webhook failed", response.status, responseText);
+    return;
+  }
+
+  if (parsed && parsed.ok === false) {
+    console.log("Tracking webhook rejected event", payload.type, parsed.error || parsed);
   }
 }
