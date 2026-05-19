@@ -18,6 +18,14 @@ var CONFIG = {
   // Maximum number of follow-ups to send (after initial email)
   MAX_FOLLOWUPS: 3,
 
+  // Max emails to send in a single script execution (optional)
+  // Useful when runColdEmailer is triggered multiple times per day.
+  MAX_EMAILS_PER_RUN: 25,
+
+  // Max emails to send per day (optional)
+  // Tracked via Script Properties as sent_count_YYYY-MM-DD.
+  DAILY_SEND_BUDGET: 100,
+
   // Subject line for the initial cold email
   INITIAL_SUBJECT: "Quick question for {{company}}",
 

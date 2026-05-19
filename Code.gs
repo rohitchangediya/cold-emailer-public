@@ -36,6 +36,20 @@ function runColdEmailer() {
 
   var sheet = getSheet();
   var data = sheet.getDataRange().getValues();
+
+  var todayKey = getTodayKey_();
+  var sentToday = getDailySentCount_(todayKey);
+  var dailySendBudget = getDailySendBudget_();
+  var remainingDailyQuota = Math.max(0, dailySendBudget - sentToday);
+  var maxEmailsPerRun = getMaxEmailsPerRun_();
+  var runSendBudget = Math.min(remainingDailyQuota, maxEmailsPerRun);
+  var sentThisRun = 0;
+
+  Logger.log("Daily budget: " + dailySendBudget + ", sent today: " + sentToday + ", remaining: " + remainingDailyQuota + ", run budget: " + runSendBudget);
+  if (runSendBudget <= 0) {
+    Logger.log("Stopping run: daily send budget exhausted.");
+    return;
+  }
   
   // Track emails for duplicate detection
   var seenEmails = {};
@@ -120,6 +134,11 @@ function runColdEmailer() {
     }
 
     // --- Send email ---
+    if (sentThisRun >= runSendBudget) {
+      Logger.log("Run send budget reached (" + runSendBudget + "). Stopping execution.");
+      break;
+    }
+
     var subject = buildSubject(sequence, company);
     var body    = getEmailBody(sequence, firstName, company);
 
@@ -175,6 +194,10 @@ function runColdEmailer() {
       Logger.log("Sent sequence " + sequence + " to " + email + " [" + newStatus + "]" + 
         (CONFIG.ENABLE_OPEN_TRACKING || CONFIG.ENABLE_CLICK_TRACKING ? " with tracking ID: " + trackingId.substring(0, 8) + "..." : ""));
 
+      sentThisRun++;
+      sentToday++;
+      setDailySentCount_(todayKey, sentToday);
+
       // Respect send limits — pause briefly between sends
       Utilities.sleep(1000);
 
@@ -182,6 +205,53 @@ function runColdEmailer() {
       Logger.log("ERROR sending to " + email + ": " + e.message + " | stack: " + e.stack);
     }
   }
+}
+
+function getMaxEmailsPerRun_() {
+  var configured = CONFIG.MAX_EMAILS_PER_RUN;
+  if (configured === undefined || configured === null || configured === "") {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  var parsed = Number(configured);
+  if (!isFinite(parsed) || parsed <= 0) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return Math.floor(parsed);
+}
+
+function getTodayKey_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+function getDailySentCount_(todayKey) {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty("sent_count_" + todayKey);
+  var parsed = Number(raw || 0);
+  if (!isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return Math.floor(parsed);
+}
+
+function setDailySentCount_(todayKey, count) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty("sent_count_" + todayKey, String(Math.max(0, Math.floor(count))));
+}
+
+function getDailySendBudget_() {
+  var configured = CONFIG.DAILY_SEND_BUDGET;
+  if (configured === undefined || configured === null || configured === "") {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  var parsed = Number(configured);
+  if (!isFinite(parsed) || parsed <= 0) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return Math.floor(parsed);
 }
 
 // ============================================================
