@@ -7,7 +7,9 @@ Automated outbound email sequencing built with Google Apps Script, Google Sheets
 - Sends personalized cold emails from sheet-based lead data.
 - Progresses follow-up sequence based on elapsed days and reply state.
 - Stops sends when replies are detected across tracked thread IDs.
+- Stores reply sentiment (`positive | negative | neutral`) and last reply text.
 - Tracks opens, clicks, and unsubscribes via a Cloudflare Worker.
+- On unsubscribe, marks `unsubscribed=true` and sets status to `skip` (unless already `replied`).
 - Detects likely bounces from Gmail inbox and marks lead status.
 - Stores campaign state and engagement metrics directly in Google Sheets.
 
@@ -51,7 +53,7 @@ Automated outbound email sequencing built with Google Apps Script, Google Sheets
 | `followed_up_3` | third follow-up sent |
 | `replied` | reply detected |
 | `dead` | no further outreach (terminal) |
-| `skip` | manually excluded |
+| `skip` | excluded (manual or unsubscribe) |
 | `bounced` | delivery failure detected |
 
 ## Troubleshooting Snapshot
@@ -61,6 +63,7 @@ Automated outbound email sequencing built with Google Apps Script, Google Sheets
   - Apps Script deployment access is `Anyone`.
   - shared secret matches in both systems.
 - Use `npx wrangler tail` while testing `/click` and `/open` URLs.
+- Seeing two unsubscribe links in Gmail can be normal: one is Gmail UI, one is app footer.
 
 ## License
 
